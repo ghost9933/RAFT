@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package raft;
+
+// The Raft service definition.
+service RaftNode {
+  // Leader Election RPCs
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+  // Client Interaction RPC
+  rpc ClientRequest(ClientRequestMessage) returns (ClientResponseMessage);
+
+  // Optional: For nodes to provide leader information to clients
+  rpc GetLeaderInfo(LeaderInfoRequest) returns (LeaderInfoResponse);
+}
+
+// Message definitions for RequestVote RPC
+message RequestVoteRequest {
+  int32 term = 1;          // Candidate’s term
+  int32 candidateId = 2;   // Candidate requesting vote
+  int32 lastLogIndex = 3;  // Index of candidate’s last log entry
+  int32 lastLogTerm = 4;   // Term of candidate’s last log entry
+}
+
+message RequestVoteResponse {
+  int32 term = 1;          // Current term, for candidate to update itself
+  bool voteGranted = 2;    // True means candidate received vote
+}
+
+// Message definitions for AppendEntries RPC (used for both heartbeats and log replication)
+message AppendEntriesRequest {
+  int32 term = 1;              // Leader’s term
+  int32 leaderId = 2;          // So follower can redirect clients
+  int32 prevLogIndex = 3;      // Index of log entry immediately preceding new ones
+  int32 prevLogTerm = 4;       // Term of prevLogIndex entry
+  repeated LogEntry entries = 5; // Log entries to store (empty for heartbeat)
+  int32 leaderCommit = 6;      // Leader’s commit index
+}
+
+message AppendEntriesResponse {
+  int32 term = 1;          // Current term, for leader to update itself
+  bool success = 2;        // True if follower contained entry matching prevLogIndex and prevLogTerm
+}
+
+// Log entry structure
+message LogEntry {
+  int32 term = 1;          // Term when entry was received by leader
+  int32 index = 2;         // Position in the log
+  string operation = 3;    // Operation to execute
+}
+
+// Messages for client requests
+message ClientRequestMessage {
+  string operation = 1;    // Operation requested by the client
+}
+
+message ClientResponseMessage {
+  string result = 1;       // Result of the operation
+  bool success = 2;        // True if operation was successful
+}
+
+// Optional messages for leader information
+message LeaderInfoRequest {
+  // Empty message
+}
+
+message LeaderInfoResponse {
+  int32 leaderId = 1;      // ID of the current leader
+  string leaderAddress = 2; // Network address of the leader
+}
