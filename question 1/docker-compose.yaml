@@ -6,11 +6,13 @@ services:
       - ID=1
       - HOST=node1
       - PORT=50051
-      - PEERS=2:node2:50052,3:node3:50053
+      - PEERS=2:node2:50052,3:node3:50053,4:node4:50054,5:node5:50055
     networks:
       raft_net:
         aliases:
           - node1
+    ports:
+      - "50051:50051"
 
   node2:
     build: .
@@ -18,11 +20,13 @@ services:
       - ID=2
       - HOST=node2
       - PORT=50052
-      - PEERS=1:node1:50051,3:node3:50053
+      - PEERS=1:node1:50051,3:node3:50053,4:node4:50054,5:node5:50055
     networks:
       raft_net:
         aliases:
           - node2
+    ports:
+      - "50052:50052"
 
   node3:
     build: .
@@ -30,11 +34,41 @@ services:
       - ID=3
       - HOST=node3
       - PORT=50053
-      - PEERS=1:node1:50051,2:node2:50052
+      - PEERS=1:node1:50051,2:node2:50052,4:node4:50054,5:node5:50055
     networks:
       raft_net:
         aliases:
           - node3
+    ports:
+      - "50053:50053"
+
+  node4:
+    build: .
+    environment:
+      - ID=4
+      - HOST=node4
+      - PORT=50054
+      - PEERS=1:node1:50051,2:node2:50052,3:node3:50053,5:node5:50055
+    networks:
+      raft_net:
+        aliases:
+          - node4
+    ports:
+      - "50054:50054"
+
+  node5:
+    build: .
+    environment:
+      - ID=5
+      - HOST=node5
+      - PORT=50055
+      - PEERS=1:node1:50051,2:node2:50052,3:node3:50053,4:node4:50054
+    networks:
+      raft_net:
+        aliases:
+          - node5
+    ports:
+      - "50055:50055"
 
 networks:
   raft_net:
