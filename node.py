@@ -6,7 +6,6 @@ import raft_pb2
 import raft_pb2_grpc
 import logging
 import os
-import sys
 import random
 
 # Configure logging
@@ -28,8 +27,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         self.lock = threading.Lock()
         self.election_timer = None
         self.heartbeat_timer = None
-        self.election_timeout = random.uniform(0.15, 0.3)  # Increased timeout
-        self.heartbeat_timeout = 0.1 # Increased heartbeat interval
+        self.election_timeout = random.uniform(1.0, 2.0)  # Election timeout between 1-2 seconds
+        self.heartbeat_timeout = 0.1  # Heartbeat interval of 100ms
         self.reset_election_timer()
 
     # RPC Methods
@@ -74,30 +73,36 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             response.success = False
 
             if term < self.current_term:
+                logging.info(f"Process {self.id} rejects AppendEntries from Leader {leaderId} (term {term} < current term {self.current_term})")
                 return response
 
-            self.leader_id = leaderId
             if term > self.current_term:
+                # New term discovered
                 self.current_term = term
                 self.voted_for = None
+                self.state = 'follower'
+                logging.info(f"Process {self.id} updates term to {self.current_term} and becomes follower")
+
+            # Set leader_id and reset election timer
+            self.leader_id = leaderId
             self.state = 'follower'
             self.reset_election_timer()
 
             # Log consistency check
             if request.prevLogIndex > 0:
                 if len(self.log) < request.prevLogIndex or self.log[request.prevLogIndex - 1].term != request.prevLogTerm:
+                    logging.info(f"Process {self.id} rejects AppendEntries from Leader {leaderId} due to log inconsistency at prevLogIndex {request.prevLogIndex}")
                     return response
 
-            # Append new entries
-            index = request.prevLogIndex
-            for entry in request.entries:
-                index += 1
-                if len(self.log) >= index:
-                    if self.log[index - 1].term != entry.term:
-                        self.log = self.log[:index - 1]
-                        self.log.append(entry)
-                else:
-                    self.log.append(entry)
+            # Clone the log from the leader starting from prevLogIndex
+            # This replaces the follower's log with the leader's log from prevLogIndex onward
+            if request.entries:
+                new_entries = list(request.entries)
+                # Truncate the log at prevLogIndex and append new entries
+                self.log = self.log[:request.prevLogIndex] + new_entries
+                logging.info(f"Process {self.id} clones log from Leader {leaderId} starting at index {request.prevLogIndex + 1}")
+            else:
+                logging.info(f"Process {self.id} received heartbeat from Leader {leaderId}")
 
             # Update commitIndex
             if request.leaderCommit > self.commitIndex:
@@ -132,7 +137,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     def reset_election_timer(self):
         if self.election_timer and self.election_timer.is_alive():
             self.election_timer.cancel()
-        self.election_timeout = random.uniform(1.0, 2.0)  # Increased timeout
+        self.election_timeout = random.uniform(1.0, 2.0)  # Election timeout between 1-2 seconds
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
 
@@ -186,11 +191,22 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     def send_append_entries(self, peer):
         channel = grpc.insecure_channel(f"{peer[0]}:{peer[1]}")
         stub = raft_pb2_grpc.RaftServiceStub(channel)
-        # Prepare AppendEntriesRequest with log entries
+        # Prepare AppendEntriesRequest with log entries starting at nextIndex
         next_idx = self.nextIndex.get(peer[2], len(self.log) + 1)
         prevLogIndex = next_idx - 1
-        prevLogTerm = self.log[prevLogIndex - 1].term if prevLogIndex > 0 and prevLogIndex <= len(self.log) else 0
-        entries = self.log
+        if prevLogIndex == 0:
+            prevLogTerm = 0
+        elif prevLogIndex <= len(self.log):
+            prevLogTerm = self.log[prevLogIndex - 1].term
+        else:
+            prevLogTerm = 0  # Handle appropriately
+
+        # Entries to send: only the new entries starting from nextIndex
+        if next_idx <= len(self.log):
+            entries = self.log[next_idx - 1:]
+        else:
+            entries = []
+
         request = raft_pb2.AppendEntriesRequest(
             term=self.current_term,
             leaderId=self.id,
@@ -199,22 +215,29 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             entries=entries,
             leaderCommit=self.commitIndex
         )
-        logging.info(f"Process {self.id} sends RPC AppendEntries to Process {peer[2]}")
+        logging.info(f"Process {self.id} sends RPC AppendEntries to Process {peer[2]}, prevLogIndex={prevLogIndex}, entries={len(entries)}")
         try:
             response = stub.AppendEntries(request)
             if response.success:
-                self.nextIndex[peer[2]] = prevLogIndex + len(entries) + 1
-                self.matchIndex[peer[2]] = self.nextIndex[peer[2]] - 1
+                if entries:
+                    # Update nextIndex and matchIndex
+                    self.nextIndex[peer[2]] = len(self.log) + 1
+                    self.matchIndex[peer[2]] = len(self.log)
+                else:
+                    # Heartbeat, no entries appended
+                    self.nextIndex[peer[2]] = next_idx
+                    self.matchIndex[peer[2]] = len(self.log)
                 # Check if any entries can be committed
                 for i in range(self.commitIndex + 1, len(self.log) + 1):
                     count = 1  # Leader has the entry
                     for p in self.peers:
                         if self.matchIndex.get(p[2], 0) >= i:
                             count += 1
-                    if count > (len(self.peers) + 1) // 2:
+                    if count > (len(self.peers) + 1) // 2 and self.log[i - 1].term == self.current_term:
                         self.commitIndex = i
                         self.apply_logs()
             else:
+                # AppendEntries failed due to log inconsistency
                 self.nextIndex[peer[2]] = max(1, self.nextIndex[peer[2]] - 1)
         except Exception as e:
             logging.error(f"Process {self.id} failed to send AppendEntries to Process {peer[2]}: {e}")
@@ -274,11 +297,13 @@ if __name__ == '__main__':
     # Read environment variables or command-line arguments
     node_id = int(os.environ.get('ID'))
     host = os.environ.get('HOST')
-    port = os.environ.get('PORT')
+    port = int(os.environ.get('PORT'))
     peers = []
-    for peer in os.environ.get('PEERS').split(','):
-        p_id, p_host, p_port = peer.split(':')
-        if int(p_id) != node_id:
-            peers.append((p_host, p_port, int(p_id)))
+    peers_env = os.environ.get('PEERS')
+    if peers_env:
+        for peer in peers_env.split(','):
+            p_id, p_host, p_port = peer.split(':')
+            if int(p_id) != node_id:
+                peers.append((p_host, int(p_port), int(p_id)))
     node = RaftNode(node_id, peers)
     node.serve(host, port)
