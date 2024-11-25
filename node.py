@@ -4,12 +4,8 @@ import threading
 import time
 import raft_pb2
 import raft_pb2_grpc
-import logging
 import os
 import random
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     def __init__(self, node_id, peers):
@@ -27,8 +23,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         self.lock = threading.Lock()
         self.election_timer = None
         self.heartbeat_timer = None
-        self.election_timeout = random.uniform(1.0, 2.0)  
-        self.heartbeat_timeout = 0.1  
+        self.election_timeout = random.uniform(1.0, 2.0)
+        self.heartbeat_timeout = 0.1
         self.reset_election_timer()
 
     # RPC Methods
@@ -41,7 +37,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             response.voteGranted = False
 
             if term < self.current_term:
-                logging.info(f"Process {self.id} rejects vote for Process {candidateId} (term {term} < current term {self.current_term})")
+                print(f"Node {self.id} rejects vote for Node {candidateId} (term {term} < current term {self.current_term})")
                 return response
 
             if term > self.current_term:
@@ -50,17 +46,17 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 self.voted_for = None
                 self.state = 'follower'
                 self.reset_election_timer()
-                logging.info(f"Process {self.id} updates term to {self.current_term} and becomes follower")
+                print(f"Node {self.id} updates term to {self.current_term} and becomes follower")
 
             # Grant vote if not voted yet in this term or already voted for this candidate
             if self.voted_for is None or self.voted_for == candidateId:
                 self.voted_for = candidateId
                 response.voteGranted = True
-                logging.info(f"Process {self.id} grants vote to Process {candidateId} for term {self.current_term}")
+                print(f"Node {self.id} grants vote to Node {candidateId} for term {self.current_term}")
                 self.reset_election_timer()
             else:
                 # Vote has already been cast for another candidate in this term
-                logging.info(f"Process {self.id} denies vote to Process {candidateId} for term {self.current_term} (already voted for Process {self.voted_for})")
+                print(f"Node {self.id} denies vote to Node {candidateId} for term {self.current_term} (already voted for Node {self.voted_for})")
 
             return response
 
@@ -73,35 +69,33 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             response.success = False
 
             if term < self.current_term:
-                logging.info(f"Process {self.id} rejects AppendEntries from Leader {leaderId} (term {term} < current term {self.current_term})")
+                print(f"Node {self.id} rejects AppendEntries from Leader {leaderId} (term {term} < current term {self.current_term})")
                 return response
 
             if term > self.current_term:
-                # New term discovered
                 self.current_term = term
                 self.voted_for = None
                 self.state = 'follower'
-                logging.info(f"Process {self.id} updates term to {self.current_term} and becomes follower")
+                print(f"Node {self.id} updates term to {self.current_term} and becomes follower")
 
-            # Set leader_id and reset election timer
             self.leader_id = leaderId
             self.state = 'follower'
             self.reset_election_timer()
 
             # Log consistency check
             if request.prevLogIndex > 0:
-                if len(self.log) < request.prevLogIndex or self.log[request.prevLogIndex - 1].term != request.prevLogTerm:
-                    logging.info(f"Process {self.id} rejects AppendEntries from Leader {leaderId} due to log inconsistency at prevLogIndex {request.prevLogIndex}")
+                if len(self.log) < request.prevLogIndex or \
+                   self.log[request.prevLogIndex - 1].term != request.prevLogTerm:
+                    print(f"Node {self.id} rejects AppendEntries from Leader {leaderId} due to log inconsistency at prevLogIndex {request.prevLogIndex}")
                     return response
 
-
+            # Append new entries if any
             if request.entries:
                 new_entries = list(request.entries)
-
                 self.log = new_entries
-                logging.info(f"Process {self.id} clones log from Leader {leaderId} starting at index {request.prevLogIndex + 1}")
+                print(f"Node {self.id} clones log from Leader {leaderId} starting at index {request.prevLogIndex + 1}")
             else:
-                logging.info(f"Process {self.id} received heartbeat from Leader {leaderId}")
+                print(f"Node {self.id} received heartbeat from Leader {leaderId}")
 
             # Update commitIndex
             if request.leaderCommit > self.commitIndex:
@@ -117,7 +111,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 # Forward to the leader
                 leader_stub = self.get_leader_stub()
                 if leader_stub:
-                    logging.info(f"Process {self.id} forwards client request to Leader {self.leader_id}")
+                    print(f"Node {self.id} forwards client request to Leader {self.leader_id}")
                     return leader_stub.ClientRequest(request)
                 else:
                     return raft_pb2.ClientResponseMessage(result="No leader available")
@@ -136,7 +130,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
     def reset_election_timer(self):
         if self.election_timer and self.election_timer.is_alive():
             self.election_timer.cancel()
-        self.election_timeout = random.uniform(1.0, 2.0)  # Election timeout between 1-2 seconds
+        self.election_timeout = random.uniform(1.0, 2.0)
         self.election_timer = threading.Timer(self.election_timeout, self.start_election)
         self.election_timer.start()
 
@@ -145,7 +139,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             self.state = 'candidate'
             self.current_term += 1
             self.voted_for = self.id
-            logging.info(f"Process {self.id} becomes Candidate for term {self.current_term}")
+            print(f"Node {self.id} becomes Candidate for term {self.current_term}")
             votes = 1  # Vote for self
             responses = []
             for peer in self.peers:
@@ -156,7 +150,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             votes += len([r for r in responses if r.voteGranted])
             if votes > (len(self.peers) + 1) // 2:
                 self.state = 'leader'
-                logging.info(f"Process {self.id} becomes Leader for term {self.current_term}")
+                print(f"Node {self.id} becomes Leader for term {self.current_term}")
                 self.nextIndex = {peer[2]: len(self.log) + 1 for peer in self.peers}
                 self.matchIndex = {peer[2]: 0 for peer in self.peers}
                 self.start_heartbeat()
@@ -167,12 +161,12 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         channel = grpc.insecure_channel(f"{peer[0]}:{peer[1]}")
         stub = raft_pb2_grpc.RaftServiceStub(channel)
         request = raft_pb2.RequestVoteRequest(term=self.current_term, candidateId=self.id)
-        logging.info(f"Process {self.id} sends RPC RequestVote to Process {peer[2]}")
+        print(f"Node {self.id} sends RequestVote to Node {peer[2]}")
         try:
             response = stub.RequestVote(request)
             responses.append(response)
         except Exception as e:
-            logging.error(f"Process {self.id} failed to send RequestVote to Process {peer[2]}: {e}")
+            print(f"Node {self.id} failed to send RequestVote to Node {peer[2]}: {e}")
 
     def start_heartbeat(self):
         if self.heartbeat_timer and self.heartbeat_timer.is_alive():
@@ -200,11 +194,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         else:
             prevLogTerm = 0  # Handle appropriately
 
-        # Entries to send: only the new entries starting from nextIndex
-        if next_idx <= len(self.log):
-            entries = self.log
-        else:
-            entries = []
+        entries = self.log
 
         request = raft_pb2.AppendEntriesRequest(
             term=self.current_term,
@@ -214,19 +204,18 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             entries=entries,
             leaderCommit=self.commitIndex
         )
-        logging.info(f"Process {self.id} sends RPC AppendEntries to Process {peer[2]}, prevLogIndex={prevLogIndex}, entries={len(entries)}")
+        print(f"Node {self.id} sends AppendEntries to Node {peer[2]}, prevLogIndex={prevLogIndex}, entries={len(entries)}")
         try:
             response = stub.AppendEntries(request)
             if response.success:
                 if entries:
-                    
                     self.nextIndex[peer[2]] = len(self.log) + 1
                     self.matchIndex[peer[2]] = len(self.log)
                 else:
                     # Heartbeat
                     self.nextIndex[peer[2]] = next_idx
                     self.matchIndex[peer[2]] = len(self.log)
-                #entries-committed
+                # Update commitIndex
                 for i in range(self.commitIndex + 1, len(self.log) + 1):
                     count = 1  # Leader has the entry
                     for p in self.peers:
@@ -236,15 +225,14 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                         self.commitIndex = i
                         self.apply_logs()
             else:
-                # AppendEntries failed due to log inconsistency
                 self.nextIndex[peer[2]] = max(1, self.nextIndex[peer[2]] - 1)
         except Exception as e:
-            logging.error(f"Process {self.id} failed to send AppendEntries to Process {peer[2]}: {e}")
+            print(f"Node {self.id} failed to send AppendEntries to Node {peer[2]}: {e}")
 
     def append_log(self, operation):
         entry = raft_pb2.LogEntry(term=self.current_term, index=len(self.log) + 1, operation=operation)
         self.log.append(entry)
-        logging.info(f"Process {self.id} appends operation '{operation}' to log at index {entry.index}")
+        print(f"Node {self.id} appends operation '{operation}' to log at index {entry.index}")
 
     def replicate_log(self):
         for peer in self.peers:
@@ -254,8 +242,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         while self.lastApplied < self.commitIndex:
             self.lastApplied += 1
             entry = self.log[self.lastApplied - 1]
-            # Execute the operation (placeholder)
-            logging.info(f"Process {self.id} executes operation '{entry.operation}' from log index {entry.index}")
+            # Execute operation
+            print(f"Node {self.id} executes operation '{entry.operation}' from log index {entry.index}")
 
     def get_leader_stub(self):
         if self.leader_id:
@@ -266,13 +254,12 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                     return stub
         return None
 
-    # Start the gRPC server
     def serve(self, host, port):
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
         raft_pb2_grpc.add_RaftServiceServicer_to_server(self, server)
         server.add_insecure_port(f"0.0.0.0:{port}")  # Listen on all interfaces
         server.start()
-        logging.info(f"Process {self.id} started at {host}:{port}")
+        print(f"Node {self.id} started at {host}:{port}")
         try:
             while True:
                 time.sleep(1)
@@ -291,7 +278,6 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             )
             return response
 
-    # Main Execution
 if __name__ == '__main__':
     # Read environment variables or command-line arguments
     node_id = int(os.environ.get('ID'))

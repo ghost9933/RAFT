@@ -84,7 +84,6 @@ class TestRaftAlgorithm(unittest.TestCase):
 
  
     def test_concurrent_client_requests(self):
-        """Test that multiple client requests are correctly replicated and committed."""
         leader_stub, leader_id = self.find_leader()
         self.assertIsNotNone(leader_stub, "No leader found in the cluster")
 
