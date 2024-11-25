@@ -27,8 +27,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         self.lock = threading.Lock()
         self.election_timer = None
         self.heartbeat_timer = None
-        self.election_timeout = random.uniform(1.0, 2.0)  # Election timeout between 1-2 seconds
-        self.heartbeat_timeout = 0.1  # Heartbeat interval of 100ms
+        self.election_timeout = random.uniform(1.0, 2.0)  
+        self.heartbeat_timeout = 0.1  
         self.reset_election_timer()
 
     # RPC Methods
@@ -94,12 +94,11 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                     logging.info(f"Process {self.id} rejects AppendEntries from Leader {leaderId} due to log inconsistency at prevLogIndex {request.prevLogIndex}")
                     return response
 
-            # Clone the log from the leader starting from prevLogIndex
-            # This replaces the follower's log with the leader's log from prevLogIndex onward
+
             if request.entries:
                 new_entries = list(request.entries)
-                # Truncate the log at prevLogIndex and append new entries
-                self.log = self.log[:request.prevLogIndex] + new_entries
+
+                self.log = new_entries
                 logging.info(f"Process {self.id} clones log from Leader {leaderId} starting at index {request.prevLogIndex + 1}")
             else:
                 logging.info(f"Process {self.id} received heartbeat from Leader {leaderId}")
@@ -203,7 +202,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
 
         # Entries to send: only the new entries starting from nextIndex
         if next_idx <= len(self.log):
-            entries = self.log[next_idx - 1:]
+            entries = self.log
         else:
             entries = []
 
@@ -220,14 +219,14 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
             response = stub.AppendEntries(request)
             if response.success:
                 if entries:
-                    # Update nextIndex and matchIndex
+                    
                     self.nextIndex[peer[2]] = len(self.log) + 1
                     self.matchIndex[peer[2]] = len(self.log)
                 else:
-                    # Heartbeat, no entries appended
+                    # Heartbeat
                     self.nextIndex[peer[2]] = next_idx
                     self.matchIndex[peer[2]] = len(self.log)
-                # Check if any entries can be committed
+                #entries-committed
                 for i in range(self.commitIndex + 1, len(self.log) + 1):
                     count = 1  # Leader has the entry
                     for p in self.peers:
