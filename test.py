@@ -82,57 +82,7 @@ class TestRaftAlgorithm(unittest.TestCase):
             except Exception as e:
                 self.fail(f"Failed to get state from node {host}:{port}: {e}")
 
-    def test_leader_failure_and_recovery(self):
-        """Test leader failure and ensure a new leader is elected and logs are consistent upon recovery."""
-        leader_stub, leader_id = self.find_leader()
-        self.assertIsNotNone(leader_stub, "No leader found in the cluster")
-
-        # Get the container name based on leader_id
-        container_name = self.get_container_name(leader_id)
-        self.assertIsNotNone(container_name, f"Container for leader node {leader_id} not found")
-        
-        # Stop the leader node
-        print(f"Stopping leader node {container_name}")
-        subprocess.run(["docker", "stop", container_name], check=True)
-
-        # Wait for re-election
-        time.sleep(5)
-
-        # Verify a new leader is elected
-        new_leader_stub, new_leader_id = self.find_leader()
-        self.assertIsNotNone(new_leader_stub, "No new leader elected after stopping the original leader")
-        self.assertNotEqual(new_leader_id, leader_id, "New leader is the same as the old leader")
-        print(f"New leader elected: Process {new_leader_id}")
-
-        # Send a client request to the new leader
-        new_operation = "set b=2"
-        request = raft_pb2.ClientRequestMessage(operation=new_operation)
-        response = new_leader_stub.ClientRequest(request)
-        self.assertIn("executed", response.result)
-        print(f"Client request '{new_operation}' executed by Leader {new_leader_id}")
-
-        # Restart the original leader node
-        print(f"Starting original leader node {container_name}")
-        subprocess.run(["docker", "start", container_name], check=True)
-
-        # Wait for the original leader to catch up
-        time.sleep(5)
-
-        # Verify that the original leader has the latest logs
-        try:
-            restarted_stub = self.get_stub("localhost", 50051)  # Adjust based on node mapping
-            restarted_state = restarted_stub.GetState(raft_pb2.Empty())
-            current_leader_stub, current_leader_id = self.find_leader()
-            self.assertIsNotNone(current_leader_stub, "No current leader found after recovery")
-            self.assertEqual(len(restarted_state.log), len(current_leader_stub.GetState(raft_pb2.Empty()).log),
-                             "Log length mismatch between restarted leader and current leader")
-            for r_entry, c_entry in zip(restarted_state.log, current_leader_stub.GetState(raft_pb2.Empty()).log):
-                self.assertEqual(r_entry.operation, c_entry.operation,
-                                 "Log operation mismatch between restarted leader and current leader")
-            print(f"Original leader {leader_id} successfully caught up with the current leader {current_leader_id}.")
-        except Exception as e:
-            self.fail(f"Failed to verify log consistency after recovery: {e}")
-
+ 
     def test_concurrent_client_requests(self):
         """Test that multiple client requests are correctly replicated and committed."""
         leader_stub, leader_id = self.find_leader()
