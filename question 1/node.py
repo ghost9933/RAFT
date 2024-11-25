@@ -28,8 +28,8 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         self.lock = threading.Lock()
         self.election_timer = None
         self.heartbeat_timer = None
-        self.election_timeout = random.uniform(1.0, 2.0)  # Increased timeout
-        self.heartbeat_timeout = 0.5  # Increased heartbeat interval
+        self.election_timeout = random.uniform(0.15, 0.3)  # Increased timeout
+        self.heartbeat_timeout = 0.1 # Increased heartbeat interval
         self.reset_election_timer()
 
     # RPC Methods
@@ -46,16 +46,22 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
                 return response
 
             if term > self.current_term:
+                # Update term and reset state
                 self.current_term = term
                 self.voted_for = None
                 self.state = 'follower'
                 self.reset_election_timer()
+                logging.info(f"Process {self.id} updates term to {self.current_term} and becomes follower")
 
-            if (self.voted_for is None or self.voted_for == candidateId):
+            # Grant vote if not voted yet in this term or already voted for this candidate
+            if self.voted_for is None or self.voted_for == candidateId:
                 self.voted_for = candidateId
                 response.voteGranted = True
                 logging.info(f"Process {self.id} grants vote to Process {candidateId} for term {self.current_term}")
                 self.reset_election_timer()
+            else:
+                # Vote has already been cast for another candidate in this term
+                logging.info(f"Process {self.id} denies vote to Process {candidateId} for term {self.current_term} (already voted for Process {self.voted_for})")
 
             return response
 
@@ -184,7 +190,7 @@ class RaftNode(raft_pb2_grpc.RaftServiceServicer):
         next_idx = self.nextIndex.get(peer[2], len(self.log) + 1)
         prevLogIndex = next_idx - 1
         prevLogTerm = self.log[prevLogIndex - 1].term if prevLogIndex > 0 and prevLogIndex <= len(self.log) else 0
-        entries = self.log[next_idx - 1:] if next_idx - 1 < len(self.log) else []
+        entries = self.log
         request = raft_pb2.AppendEntriesRequest(
             term=self.current_term,
             leaderId=self.id,

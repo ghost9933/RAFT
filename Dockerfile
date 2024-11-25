@@ -1,13 +1,28 @@
-# Dockerfile
+# Use Python 3.9 Slim as the base image
+FROM python:3.9-slim
 
-FROM python:3.8-slim
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
+# Set the working directory
 WORKDIR /app
 
-COPY . /app
+# Copy the requirements file
+COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the application code
+COPY . .
+
+# Expose the port (if necessary)
 EXPOSE 5000
 
-CMD ["python", "raft_node.py"]
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Command to run when starting the container
+CMD ["python", "node.py"]
